@@ -3,17 +3,47 @@
 
 import json
 import re
+import ssl
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
+
+
+def _make_ssl_context() -> ssl.SSLContext:
+    """Create SSL context. Try verified first, fallback to unverified on macOS."""
+    try:
+        ctx = ssl.create_default_context()
+        # Test that certs are available by checking the default paths
+        urllib.request.urlopen(
+            urllib.request.Request("https://t.me/", method="HEAD"),
+            timeout=5,
+            context=ctx,
+        )
+        return ctx
+    except (ssl.SSLCertVerificationError, OSError):
+        print(
+            "Warning: SSL certificates not found, using unverified mode. "
+            "Run 'pip install certifi' or '/Applications/Python*/Install Certificates.command' to fix.",
+            file=sys.stderr,
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+
+_ssl_ctx = None
 
 
 def fetch_channel(channel_name: str, hours: int = 24) -> list[dict]:
     """Fetch posts from the last N hours from a public Telegram channel."""
     url = f"https://t.me/s/{channel_name}"
     try:
+        global _ssl_ctx
+        if _ssl_ctx is None:
+            _ssl_ctx = _make_ssl_context()
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
         print(f"Warning: could not fetch @{channel_name}: {e}", file=sys.stderr)
